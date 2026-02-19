@@ -1,0 +1,24 @@
+# Firebase credentials
+*firebase*.json
+testkot-*.json
+testrt-*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Firebase Service Account Keys
+*-firebase-adminsdk*.json
+admin-firebase-adminsdk.json

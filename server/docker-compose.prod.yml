@@ -1,0 +1,117 @@
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: RATPanel_mongodb
+    restart: always
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ownerapps
+      MONGO_INITDB_ROOT_PASSWORD: 9kiwlPwQ2ICpc1F
+      MONGO_INITDB_DATABASE: RATPanel
+    ports:
+      - "27017:27017"
+    command: mongod --wiredTigerCacheSizeGB 16 --maxConns 1000
+    networks:
+      - parental_network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/RATPanel --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  redis:
+    image: redis:7-alpine
+    container_name: RATPanel_redis
+    restart: always
+    # Force Redis to be master (not replica)
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --replicaof no one
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - parental_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: RATPanel_api
+    restart: always
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - MONGODB_URL=mongodb://ownerapps:9kiwlPwQ2ICpc1F@mongodb:27017/RATPanel?authSource=admin
+      - MONGODB_DB_NAME=RATPanel
+      - REDIS_URL=redis://redis:6379/0
+      - SERVER_PORT=80
+      - GUNICORN_WORKERS=9
+      - GUNICORN_WORKER_CONNECTIONS=2000
+      - GUNICORN_MAX_REQUESTS=1000
+      - GUNICORN_TIMEOUT=120
+      - LOG_LEVEL=info
+      - BACKUP_DIR=/app/backups
+    volumes:
+      - backup_data:/app/backups
+    ports:
+      - "80:80"
+    networks:
+      - parental_network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:80/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+  
+  fcm_ping_worker_v2:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: RATPanel_fcm_worker_v2
+    restart: always
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    environment:
+      - MONGODB_URL=mongodb://ownerapps:9kiwlPwQ2ICpc1F@mongodb:27017/RATPanel?authSource=admin
+      - MONGODB_DB_NAME=RATPanel
+      - REDIS_URL=redis://redis:6379/0
+      - WORKER_ID=worker-1
+      - WORKER_CONCURRENCY=10
+    networks:
+      - parental_network
+    command: python scripts/fcm_ping_worker_v2.py
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '1'
+          memory: 512M
+  
+networks:
+  parental_network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+    driver: local
+  redis_data:
+    driver: local
+  backup_data:
+    driver: local

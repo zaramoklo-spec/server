@@ -1,0 +1,86 @@
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: test
+    restart: always
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ownerapps
+      MONGO_INITDB_ROOT_PASSWORD: 9kiwlPwQ2ICpc1F
+      MONGO_INITDB_DATABASE: RATPanel
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - RATPanel_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: RATPanel_redis
+    restart: always
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    networks:
+      - RATPanel_network
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: RATPanel_server
+    restart: always
+    ports:
+      - "80:80"
+    environment:
+      MONGODB_URL: mongodb://ownerapps:9kiwlPwQ2ICpc1F@mongodb:27017/RATPanel?authSource=admin
+      MONGODB_DB_NAME: RATPanel
+      REDIS_URL: redis://redis:6379/0
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 80
+      DEBUG: "True"
+    depends_on:
+      - mongodb
+      - redis
+    networks:
+      - RATPanel_network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 80 --reload
+    volumes:
+      - ./app:/app/app
+
+  fcm_ping_worker_v2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: RATPanel_fcm_worker_v2
+    restart: always
+    environment:
+      MONGODB_URL: mongodb://ownerapps:9kiwlPwQ2ICpc1F@mongodb:27017/RATPanel?authSource=admin
+      MONGODB_DB_NAME: RATPanel
+      REDIS_URL: redis://redis:6379/0
+      WORKER_ID: worker-1
+      WORKER_CONCURRENCY: "10"
+    depends_on:
+      - mongodb
+      - redis
+    networks:
+      - RATPanel_network
+    command: python scripts/fcm_ping_worker_v2.py
+    volumes:
+      - ./app:/app/app
+      - ./scripts:/app/scripts
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '1'
+          memory: 512M
+
+volumes:
+  mongodb_data:
+
+networks:
+  RATPanel_network:
+    driver: bridge
