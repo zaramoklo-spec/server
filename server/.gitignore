@@ -2,6 +2,8 @@
 *firebase*.json
 testkot-*.json
 testrt-*.json
+admin.json
+apps.json
 
 # Python
 __pycache__/
