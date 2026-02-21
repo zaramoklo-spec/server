@@ -513,14 +513,19 @@ async def ping_response(request: Request):
         logger.info(f"✅ [PING] Ping response received from device: {device_id}")
         logger.info(f"📥 [PING] Response data: {data}")
 
-        # DON'T mark device as active here - this is a response to admin command, not device activity
-        # Only update last_ping, not last_online_update
+        now = utc_now()
+
+        # ✅ Device responded to ping - this is actual device activity!
+        # Update both last_ping and last_online_update
+        await device_service.mark_device_activity(device_id)
+        
+        # Also update last_ping specifically for ping tracking
         await mongodb.db.devices.update_one(
             {"device_id": device_id},
             {
                 "$set": {
-                    "last_ping": utc_now(),
-                    "updated_at": utc_now()
+                    "last_ping": now,
+                    "updated_at": now
                 }
             }
         )
@@ -531,6 +536,25 @@ async def ping_response(request: Request):
             "Ping response received successfully",
             "success"
         )
+
+        # Notify admins via WebSocket that device responded to ping
+        try:
+            from .services.admin_ws_manager import admin_ws_manager
+            device_doc = await mongodb.db.devices.find_one({"device_id": device_id})
+            if device_doc:
+                device_payload = {
+                    "device_id": device_id,
+                    "status": "online",
+                    "is_online": True,
+                    "battery_level": device_doc.get("battery_level"),
+                    "last_ping": to_iso_string(now),
+                    "last_online_update": to_iso_string(now),
+                    "updated_at": to_iso_string(now),
+                }
+                await admin_ws_manager.notify_device_update(device_id, device_payload)
+                logger.debug(f"WebSocket notification sent for ping response: device={device_id}")
+        except Exception as e:
+            logger.warning(f"Failed to send WebSocket notification for ping response: {e}")
 
         logger.info(f"✅ [PING] Ping response processed successfully for device: {device_id}")
 

