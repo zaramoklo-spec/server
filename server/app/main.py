@@ -2236,9 +2236,14 @@ async def get_device(
     # Check online status from Redis
     from .services.device_online_tracker import device_online_tracker
     redis_is_online = await device_online_tracker.is_online(device_id)
+    
+    # Use Redis status if available, but verify it's recent
     if redis_is_online is not None:
         device.is_online = redis_is_online
         device.status = "online" if redis_is_online else "offline"
+    
+    # Note: We don't update last_online_update here because this is just a GET request
+    # last_online_update should only be updated when device actually sends data
 
     # Run log_activity in background to avoid timeout
     asyncio.create_task(

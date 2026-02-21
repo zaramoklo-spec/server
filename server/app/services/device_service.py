@@ -493,8 +493,21 @@ class DeviceService:
                 
                 five_minutes_ago = utc_now() - timedelta(minutes=5)
                 
+                # Check both last_ping and last_online_update to determine if device is offline
                 last_ping = ensure_utc(device_doc.get("last_ping")) if device_doc.get("last_ping") else None
-                if last_ping and last_ping < five_minutes_ago:
+                last_online_update = ensure_utc(device_doc.get("last_online_update")) if device_doc.get("last_online_update") else None
+                
+                # Use the most recent timestamp
+                last_activity = None
+                if last_ping and last_online_update:
+                    last_activity = max(last_ping, last_online_update)
+                elif last_ping:
+                    last_activity = last_ping
+                elif last_online_update:
+                    last_activity = last_online_update
+                
+                # If last activity was more than 5 minutes ago, mark as offline
+                if last_activity and last_activity < five_minutes_ago:
                     was_online = device_doc.get("status") == "online" or device_doc.get("is_online", False)
                     
                     await mongodb.db.devices.update_one(
