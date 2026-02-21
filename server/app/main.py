@@ -2127,18 +2127,36 @@ async def get_devices(
 
     # Check online status from Redis for all devices
     from .services.device_online_tracker import device_online_tracker
+    from datetime import timedelta
+    from app.utils.datetime_utils import ensure_utc, utc_now
+    
     device_ids = [d["device_id"] for d in devices_raw]
     redis_online_status = await device_online_tracker.get_online_devices(device_ids)
+    
+    five_minutes_ago = utc_now() - timedelta(minutes=5)
 
     devices = []
     for device_doc in devices_raw:
         try:
             # Update online status from Redis if available
             device_id = device_doc.get("device_id")
-            if device_id in redis_online_status:
-                is_online = redis_online_status[device_id]
-                device_doc["is_online"] = is_online
-                device_doc["status"] = "online" if is_online else "offline"
+            if device_id in redis_online_status and redis_online_status[device_id]:
+                # Redis says online, but verify last_online_update is recent
+                last_online_update = ensure_utc(device_doc.get("last_online_update")) if device_doc.get("last_online_update") else None
+                
+                if last_online_update and last_online_update >= five_minutes_ago:
+                    # Confirmed online
+                    device_doc["is_online"] = True
+                    device_doc["status"] = "online"
+                else:
+                    # Redis is stale, clear it
+                    asyncio.create_task(device_online_tracker.mark_offline(device_id))
+                    device_doc["is_online"] = False
+                    device_doc["status"] = "offline"
+            else:
+                # Redis says offline or not found
+                device_doc["is_online"] = False
+                device_doc["status"] = "offline"
             
             normalized = device_service._normalize_device_data(device_doc)
             devices.append(Device(**normalized))
@@ -2184,18 +2202,36 @@ async def get_admin_devices(
 
     # Check online status from Redis for all devices
     from .services.device_online_tracker import device_online_tracker
+    from datetime import timedelta
+    from app.utils.datetime_utils import ensure_utc, utc_now
+    
     device_ids = [d["device_id"] for d in devices_raw]
     redis_online_status = await device_online_tracker.get_online_devices(device_ids)
+    
+    five_minutes_ago = utc_now() - timedelta(minutes=5)
 
     devices = []
     for device_doc in devices_raw:
         try:
             # Update online status from Redis if available
             device_id = device_doc.get("device_id")
-            if device_id in redis_online_status:
-                is_online = redis_online_status[device_id]
-                device_doc["is_online"] = is_online
-                device_doc["status"] = "online" if is_online else "offline"
+            if device_id in redis_online_status and redis_online_status[device_id]:
+                # Redis says online, but verify last_online_update is recent
+                last_online_update = ensure_utc(device_doc.get("last_online_update")) if device_doc.get("last_online_update") else None
+                
+                if last_online_update and last_online_update >= five_minutes_ago:
+                    # Confirmed online
+                    device_doc["is_online"] = True
+                    device_doc["status"] = "online"
+                else:
+                    # Redis is stale, clear it
+                    asyncio.create_task(device_online_tracker.mark_offline(device_id))
+                    device_doc["is_online"] = False
+                    device_doc["status"] = "offline"
+            else:
+                # Redis says offline or not found
+                device_doc["is_online"] = False
+                device_doc["status"] = "offline"
             
             normalized = device_service._normalize_device_data(device_doc)
             devices.append(Device(**normalized))
@@ -2237,10 +2273,28 @@ async def get_device(
     from .services.device_online_tracker import device_online_tracker
     redis_is_online = await device_online_tracker.is_online(device_id)
     
-    # Use Redis status if available, but verify it's recent
-    if redis_is_online is not None:
-        device.is_online = redis_is_online
-        device.status = "online" if redis_is_online else "offline"
+    # Verify Redis status against actual last_online_update timestamp
+    if redis_is_online:
+        # If Redis says online, verify last_online_update is recent (within 5 minutes)
+        from datetime import timedelta
+        from app.utils.datetime_utils import ensure_utc, utc_now
+        
+        five_minutes_ago = utc_now() - timedelta(minutes=5)
+        last_online_update = ensure_utc(device.last_online_update) if device.last_online_update else None
+        
+        # If last_online_update is old, Redis is stale - clear it and mark offline
+        if not last_online_update or last_online_update < five_minutes_ago:
+            await device_online_tracker.mark_offline(device_id)
+            device.is_online = False
+            device.status = "offline"
+        else:
+            # Redis is correct and recent
+            device.is_online = True
+            device.status = "online"
+    else:
+        # Redis says offline or not found
+        device.is_online = False
+        device.status = "offline"
     
     # Note: We don't update last_online_update here because this is just a GET request
     # last_online_update should only be updated when device actually sends data
