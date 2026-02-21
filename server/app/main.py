@@ -510,15 +510,18 @@ async def ping_response(request: Request):
             logger.warning(f"⚠️ [PING-RESPONSE] Ping response received without deviceId")
             raise HTTPException(status_code=400, detail="deviceId required")
 
-        logger.info(f"🟢 [PING-RESPONSE] START - Device: {device_id}")
-        
-        # Check timestamps BEFORE update
-        device_before = await mongodb.db.devices.find_one(
-            {"device_id": device_id},
-            {"last_ping": 1, "last_online_update": 1}
-        )
-        if device_before:
-            logger.info(f"🟢 [PING-RESPONSE] BEFORE - last_ping: {device_before.get('last_ping')}, last_online_update: {device_before.get('last_online_update')}")
+        if settings.DEBUG_PING_FLOW:
+            logger.info(f"🟢 [PING-RESPONSE] START - Device: {device_id}")
+            
+            # Check timestamps BEFORE update
+            device_before = await mongodb.db.devices.find_one(
+                {"device_id": device_id},
+                {"last_ping": 1, "last_online_update": 1}
+            )
+            if device_before:
+                logger.info(f"🟢 [PING-RESPONSE] BEFORE - last_ping: {device_before.get('last_ping')}, last_online_update: {device_before.get('last_online_update')}")
+        else:
+            logger.info(f"✅ [PING] Ping response received from device: {device_id}")
 
         now = utc_now()
 
@@ -537,7 +540,8 @@ async def ping_response(request: Request):
             }
         )
         
-        logger.info(f"🟢 [PING-RESPONSE] UPDATED - last_ping: {now}, last_online_update: {now}")
+        if settings.DEBUG_PING_FLOW:
+            logger.info(f"🟢 [PING-RESPONSE] UPDATED - last_ping: {now}, last_online_update: {now}")
 
         await device_service.add_log(
             device_id,
@@ -560,13 +564,18 @@ async def ping_response(request: Request):
                     "last_online_update": to_iso_string(now),
                     "updated_at": to_iso_string(now),
                 }
-                logger.info(f"🟢 [PING-RESPONSE] Sending WebSocket notification with timestamps: last_ping={to_iso_string(now)}, last_online_update={to_iso_string(now)}")
+                if settings.DEBUG_PING_FLOW:
+                    logger.info(f"🟢 [PING-RESPONSE] Sending WebSocket notification with timestamps: last_ping={to_iso_string(now)}, last_online_update={to_iso_string(now)}")
                 await admin_ws_manager.notify_device_update(device_id, device_payload)
-                logger.info(f"🟢 [PING-RESPONSE] WebSocket notification sent")
+                if settings.DEBUG_PING_FLOW:
+                    logger.info(f"🟢 [PING-RESPONSE] WebSocket notification sent")
         except Exception as e:
             logger.warning(f"Failed to send WebSocket notification for ping response: {e}")
 
-        logger.info(f"🟢 [PING-RESPONSE] END - Device: {device_id}")
+        if settings.DEBUG_PING_FLOW:
+            logger.info(f"🟢 [PING-RESPONSE] END - Device: {device_id}")
+        else:
+            logger.info(f"✅ [PING] Ping response processed successfully for device: {device_id}")
 
         return {"success": True, "message": "Ping response received"}
 
@@ -2461,13 +2470,15 @@ async def send_command_to_device(
     request: Request,
     current_admin: Admin = Depends(require_permission(AdminPermission.SEND_COMMANDS))
 ):
-    logger.info(f"🔵 [COMMAND] Received command: {command_request.command} for device: {device_id}")
+    if settings.DEBUG_PING_FLOW:
+        logger.info(f"🔵 [COMMAND] Received command: {command_request.command} for device: {device_id}")
     
     device = await device_service.get_device(device_id)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
     
-    logger.info(f"🔵 [COMMAND] Device found - last_ping: {device.last_ping}, last_online_update: {device.last_online_update}")
+    if settings.DEBUG_PING_FLOW:
+        logger.info(f"🔵 [COMMAND] Device found - last_ping: {device.last_ping}, last_online_update: {device.last_online_update}")
 
     if command_request.command == "note":
         priority = command_request.parameters.get("priority", "none")
@@ -2510,18 +2521,22 @@ async def send_command_to_device(
     ping_type = command_request.parameters.get("type", "server") if command_request.parameters else "server"
 
     if is_ping_command and ping_type == "firebase":
-        logger.info(f"🟠 [PING] Manual ping START - Admin: {current_admin.username}, Device: {device_id}")
-        logger.info(f"🟠 [PING] Device timestamps BEFORE ping - last_ping: {device.last_ping}, last_online_update: {device.last_online_update}")
+        if settings.DEBUG_PING_FLOW:
+            logger.info(f"🟠 [PING] Manual ping START - Admin: {current_admin.username}, Device: {device_id}")
+            logger.info(f"🟠 [PING] Device timestamps BEFORE ping - last_ping: {device.last_ping}, last_online_update: {device.last_online_update}")
+        else:
+            logger.info(f"📡 [PING] Manual ping - Admin: {current_admin.username}, Device: {device_id}")
 
         params = {k: v for k, v in (command_request.parameters or {}).items() if k != "type"}
 
         # Check device status before ping
-        device_before = await mongodb.db.devices.find_one(
-            {"device_id": device_id},
-            {"is_deleted": 1, "is_uninstalled": 1, "status": 1, "last_ping": 1, "last_online_update": 1}
-        )
-        if device_before:
-            logger.info(f"🟠 [PING] DB BEFORE ping - last_ping: {device_before.get('last_ping')}, last_online_update: {device_before.get('last_online_update')}")
+        if settings.DEBUG_PING_FLOW:
+            device_before = await mongodb.db.devices.find_one(
+                {"device_id": device_id},
+                {"is_deleted": 1, "is_uninstalled": 1, "status": 1, "last_ping": 1, "last_online_update": 1}
+            )
+            if device_before:
+                logger.info(f"🟠 [PING] DB BEFORE ping - last_ping: {device_before.get('last_ping')}, last_online_update: {device_before.get('last_online_update')}")
         
         result = await firebase_service.send_command_to_device(
             device_id,
@@ -2529,17 +2544,18 @@ async def send_command_to_device(
             params if params else None
         )
         
-        logger.info(f"🟠 [PING] Firebase command sent - Result: {result.get('success')}")
+        if settings.DEBUG_PING_FLOW:
+            logger.info(f"🟠 [PING] Firebase command sent - Result: {result.get('success')}")
 
-        # Check device status after ping
-        device_after = await mongodb.db.devices.find_one(
-            {"device_id": device_id},
-            {"is_deleted": 1, "is_uninstalled": 1, "status": 1, "last_ping": 1, "last_online_update": 1}
-        )
-        if device_after:
-            logger.info(f"🟠 [PING] DB AFTER ping - last_ping: {device_after.get('last_ping')}, last_online_update: {device_after.get('last_online_update')}")
-        
-        logger.info(f"🟠 [PING] Manual ping END - Device: {device_id}")
+            # Check device status after ping
+            device_after = await mongodb.db.devices.find_one(
+                {"device_id": device_id},
+                {"is_deleted": 1, "is_uninstalled": 1, "status": 1, "last_ping": 1, "last_online_update": 1}
+            )
+            if device_after:
+                logger.info(f"🟠 [PING] DB AFTER ping - last_ping: {device_after.get('last_ping')}, last_online_update: {device_after.get('last_online_update')}")
+            
+            logger.info(f"🟠 [PING] Manual ping END - Device: {device_id}")
 
         # Check if device was marked as uninstalled
         if result.get("is_uninstalled"):

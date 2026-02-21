@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     SERVER_HOST: str = "0.0.0.0"
     SERVER_PORT: int = 80
     DEBUG: bool = True
+    
+    # Debug Flags
+    DEBUG_PING_FLOW: bool = False  # Set to True to enable detailed ping flow logging
 
     # Security - MUST be set via environment variable in production!
     # Generate a secure key: python -c "import secrets; print(secrets.token_hex(32))"
