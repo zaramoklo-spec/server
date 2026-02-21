@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     
     # Debug Flags
-    DEBUG_PING_FLOW: bool = False  # Set to True to enable detailed ping flow logging
+    DEBUG_PING_FLOW: bool = True  # Set to False to disable detailed ping flow logging
 
     # Security - MUST be set via environment variable in production!
     # Generate a secure key: python -c "import secrets; print(secrets.token_hex(32))"
