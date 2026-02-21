@@ -24,8 +24,28 @@ services:
     image: redis:7-alpine
     container_name: RATPanel_redis
     restart: always
-    # Force Redis to be master (not replica)
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --replicaof no one
+    # Optimized Redis configuration for production
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --replicaof no one
+      --tcp-backlog 511
+      --timeout 300
+      --tcp-keepalive 60
+      --maxclients 10000
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+      --stop-writes-on-bgsave-error no
+      --rdbcompression yes
+      --rdbchecksum yes
+      --lazyfree-lazy-eviction yes
+      --lazyfree-lazy-expire yes
+      --lazyfree-lazy-server-del yes
+      --replica-lazy-flush yes
     volumes:
       - redis_data:/data
     ports:
@@ -37,6 +57,14 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 768M
+        reservations:
+          cpus: '0.5'
+          memory: 512M
   
   api:
     build:

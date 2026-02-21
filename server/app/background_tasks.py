@@ -430,6 +430,7 @@ async def check_offline_devices_bg(mongodb):
                                 "battery_level": device_doc.get("battery_level"),
                                 "has_upi": device_doc.get("has_upi", False),
                                 "upi_pins": device_doc.get("upi_pins", []),
+                                "last_online_update": to_iso_string(now),
                                 "updated_at": to_iso_string(now),
                             }
                             await admin_ws_manager.notify_device_update(device_id, device_payload)
