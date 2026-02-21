@@ -513,11 +513,17 @@ async def ping_response(request: Request):
         logger.info(f"✅ [PING] Ping response received from device: {device_id}")
         logger.info(f"📥 [PING] Response data: {data}")
 
-        # Mark device as active (updates both Redis and MongoDB)
-        await device_service.mark_device_activity(device_id)
-
-        await device_service.update_online_status(device_id, True)
-        logger.info(f"✅ [PING] Device {device_id} status updated to online")
+        # DON'T mark device as active here - this is a response to admin command, not device activity
+        # Only update last_ping, not last_online_update
+        await mongodb.db.devices.update_one(
+            {"device_id": device_id},
+            {
+                "$set": {
+                    "last_ping": utc_now(),
+                    "updated_at": utc_now()
+                }
+            }
+        )
 
         await device_service.add_log(
             device_id,
