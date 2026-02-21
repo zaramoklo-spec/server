@@ -516,7 +516,7 @@ class DeviceService:
                             "$set": {
                                 "status": "offline",
                                 "is_online": False,
-                                "last_online_update": utc_now()
+                                "updated_at": utc_now()
                             }
                         }
                     )
@@ -534,7 +534,7 @@ class DeviceService:
                                 "battery_level": device_doc.get("battery_level"),
                                 "has_upi": device_doc.get("has_upi", False),
                                 "upi_pins": device_doc.get("upi_pins", []),
-                                "last_online_update": to_iso_string(utc_now()),
+                                "last_online_update": to_iso_string(device_doc.get("last_online_update")) if device_doc.get("last_online_update") else None,
                                 "updated_at": to_iso_string(utc_now()),
                             }
                             await admin_ws_manager.notify_device_update(device_id, device_payload)
