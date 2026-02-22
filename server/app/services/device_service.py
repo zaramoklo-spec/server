@@ -55,11 +55,16 @@ class DeviceService:
         try:
             # Mark in Redis with 5-minute TTL (fast online tracking)
             from .device_online_tracker import device_online_tracker
-            await device_online_tracker.mark_online(device_id)
+            redis_success = await device_online_tracker.mark_online(device_id)
+            
+            if redis_success:
+                logger.debug(f"✅ Device marked online in Redis: {device_id}")
+            else:
+                logger.warning(f"⚠️ Failed to mark device online in Redis (Redis unavailable?): {device_id}")
             
             # Update MongoDB with last_online_update timestamp
             now = utc_now()
-            await mongodb.db.devices.update_one(
+            result = await mongodb.db.devices.update_one(
                 {"device_id": device_id},
                 {
                     "$set": {
@@ -70,8 +75,14 @@ class DeviceService:
                     }
                 }
             )
+            
+            if result.modified_count > 0:
+                logger.debug(f"✅ Device marked online in MongoDB: {device_id}")
+            else:
+                logger.debug(f"ℹ️ Device already online in MongoDB: {device_id}")
+                
         except Exception as e:
-            logger.warning(f"Failed to mark device activity for {device_id}: {e}")
+            logger.error(f"❌ Failed to mark device activity for {device_id}: {e}", exc_info=True)
 
     @staticmethod
     def _assign_telegram_bot() -> int:

@@ -51,26 +51,8 @@ class RedisConnectionManager:
         try:
             self._redis_url = getattr(settings, 'REDIS_URL', 'redis://localhost:6379/0')
             
-            # Create connection pool with optimized settings
-            self._pool = ConnectionPool.from_url(
-                self._redis_url,
-                encoding="utf-8",
-                decode_responses=True,
-                max_connections=50,  # Maximum connections in pool
-                socket_connect_timeout=5,
-                socket_timeout=5,
-                socket_keepalive=True,
-                socket_keepalive_options={
-                    1: 1,  # TCP_KEEPIDLE
-                    2: 1,  # TCP_KEEPINTVL
-                    3: 3,  # TCP_KEEPCNT
-                },
-                retry_on_timeout=True,
-                health_check_interval=30,  # Check connection health every 30s
-            )
-            
-            # Create Redis client from pool
-            self._redis_client = aioredis.Redis(connection_pool=self._pool)
+            # Create Redis client directly with minimal parameters
+            self._redis_client = aioredis.from_url(self._redis_url)
             
             # Test connection
             await self._redis_client.ping()
@@ -92,20 +74,8 @@ class RedisConnectionManager:
                     master_url = f"redis://{master_host}:{master_port}/0"
                     self._redis_url = master_url
                     
-                    self._pool = ConnectionPool.from_url(
-                        master_url,
-                        encoding="utf-8",
-                        decode_responses=True,
-                        max_connections=50,
-                        socket_connect_timeout=5,
-                        socket_timeout=5,
-                        socket_keepalive=True,
-                        socket_keepalive_options={1: 1, 2: 1, 3: 3},
-                        retry_on_timeout=True,
-                        health_check_interval=30,
-                    )
+                    self._redis_client = aioredis.from_url(master_url)
                     
-                    self._redis_client = aioredis.Redis(connection_pool=self._pool)
                     await self._redis_client.ping()
                     logger.info(f"✅ Connected to Redis master at {master_url}")
             
